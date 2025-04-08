@@ -2,7 +2,6 @@ use anyhow::Result;
 use goose::session::info::{get_session_info, SessionInfo, SortOrder};
 
 pub fn handle_session_list(verbose: bool, format: String, ascending: bool) -> Result<()> {
-    // Determine sort order based on the ascending flag
     let sort_order = if ascending {
         SortOrder::Ascending
     } else {
