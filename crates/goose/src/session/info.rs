@@ -14,9 +14,7 @@ pub struct SessionInfo {
 
 /// Sort order for listing sessions
 pub enum SortOrder {
-    /// Sort by date in ascending order (oldest first)
     Ascending,
-    /// Sort by date in descending order (newest first)
     Descending,
 }
 
@@ -67,9 +65,7 @@ pub fn get_session_info(sort_order: SortOrder) -> Result<Vec<SessionInfo>> {
         }
         
         match sort_order {
-            // Ascending order (oldest first)
             SortOrder::Ascending => a.modified.cmp(&b.modified),
-            // Descending order (newest first)
             SortOrder::Descending => b.modified.cmp(&a.modified),
         }
     });
