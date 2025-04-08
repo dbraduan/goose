@@ -1,8 +1,15 @@
 use anyhow::Result;
-use goose::session::info::{get_session_info, SessionInfo};
+use goose::session::info::{get_session_info, SessionInfo, SortOrder};
 
-pub fn handle_session_list(verbose: bool, format: String) -> Result<()> {
-    let sessions = match get_session_info() {
+pub fn handle_session_list(verbose: bool, format: String, ascending: bool) -> Result<()> {
+    // Determine sort order based on the ascending flag
+    let sort_order = if ascending {
+        SortOrder::Ascending
+    } else {
+        SortOrder::Descending
+    };
+
+    let sessions = match get_session_info(sort_order) {
         Ok(sessions) => sessions,
         Err(e) => {
             tracing::error!("Failed to list sessions: {:?}", e);
