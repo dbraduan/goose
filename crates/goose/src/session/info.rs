@@ -51,7 +51,7 @@ pub fn get_session_info(sort_order: SortOrder) -> Result<Vec<SessionInfo>> {
             }
         })
         .collect::<Vec<SessionInfo>>();
-    
+
     // Sort sessions by modified date
     // Since all dates are in ISO format (YYYY-MM-DD HH:MM:SS UTC), we can just use string comparison
     // This works because the ISO format ensures lexicographical ordering matches chronological ordering
@@ -63,7 +63,7 @@ pub fn get_session_info(sort_order: SortOrder) -> Result<Vec<SessionInfo>> {
         } else if b.modified == "Unknown" {
             return Ordering::Less;
         }
-        
+
         match sort_order {
             SortOrder::Ascending => a.modified.cmp(&b.modified),
             SortOrder::Descending => b.modified.cmp(&a.modified),

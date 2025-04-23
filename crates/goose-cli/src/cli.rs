@@ -400,7 +400,11 @@ pub async fn cli() -> Result<()> {
             builtins,
         }) => {
             return match command {
-                Some(SessionCommand::List { verbose, format, ascending }) => {
+                Some(SessionCommand::List {
+                    verbose,
+                    format,
+                    ascending,
+                }) => {
                     handle_session_list(verbose, format, ascending)?;
                     Ok(())
                 }

@@ -21,7 +21,7 @@ pub fn remove_session(session: &SessionInfo) -> Result<()> {
 }
 
 pub fn handle_session_remove(id: String, regex_string: String) -> Result<()> {
-    let sessions = match get_session_info() {
+    let sessions = match get_session_info(SortOrder::Descending) {
         Ok(sessions) => sessions,
         Err(e) => {
             tracing::error!("Failed to remove sessions: {:?}", e);
