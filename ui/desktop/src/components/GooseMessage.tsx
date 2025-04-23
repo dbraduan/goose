@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import LinkPreview from './LinkPreview';
 import GooseResponseForm from './GooseResponseForm';
 import { extractUrls } from '../utils/urlUtils';
+import { formatMessageTimestamp } from '../utils/timeUtils';
 import MarkdownContent from './MarkdownContent';
 import ToolCallWithResponse from './ToolCallWithResponse';
 import {
@@ -11,9 +12,11 @@ import {
   getToolResponses,
   getToolConfirmationContent,
   createToolErrorResponseMessage,
+  getExtensionContent,
 } from '../types/message';
 import ToolCallConfirmation from './ToolCallConfirmation';
 import MessageCopyLink from './MessageCopyLink';
+import ExtensionConfirmation from './ExtensionConfirmation';
 
 interface GooseMessageProps {
   messageHistoryIndex: number;
@@ -37,6 +40,9 @@ export default function GooseMessage({
   // Extract text content from the message
   let textContent = getTextContent(message);
 
+  // Memoize the timestamp
+  const timestamp = useMemo(() => formatMessageTimestamp(message.created), [message.created]);
+
   // Get tool requests from the message
   const toolRequests = getToolRequests(message);
 
@@ -51,6 +57,9 @@ export default function GooseMessage({
 
   const toolConfirmationContent = getToolConfirmationContent(message);
   const hasToolConfirmation = toolConfirmationContent !== undefined;
+
+  const extensionContent = getExtensionContent(message);
+  const hasExtensionRequest = extensionContent !== undefined;
 
   // Find tool responses that correspond to the tool requests in this message
   const toolResponsesMap = useMemo(() => {
@@ -77,12 +86,33 @@ export default function GooseMessage({
   useEffect(() => {
     // If the message is the last message in the resumed session and has tool confirmation, it means the tool confirmation
     // is broken or cancelled, to contonue use the session, we need to append a tool response to avoid mismatch tool result error.
-    if (messageIndex == messageHistoryIndex - 1 && hasToolConfirmation) {
+    if (
+      messageIndex === messageHistoryIndex - 1 &&
+      hasToolConfirmation &&
+      toolConfirmationContent
+    ) {
       appendMessage(
         createToolErrorResponseMessage(toolConfirmationContent.id, 'The tool call is cancelled.')
       );
     }
-  }, []);
+    if (messageIndex == messageHistoryIndex - 1 && hasExtensionRequest) {
+      appendMessage(
+        createToolErrorResponseMessage(
+          extensionContent.id,
+          'The extension enablement is cancelled.'
+        )
+      );
+    }
+  }, [
+    messageIndex,
+    messageHistoryIndex,
+    hasToolConfirmation,
+    toolConfirmationContent,
+    appendMessage,
+    hasExtensionRequest,
+    // Only include enableExtensionContent if it exists
+    extensionContent?.id,
+  ]);
 
   return (
     <div className="goose-message flex w-[90%] justify-start opacity-0 animate-[appear_150ms_ease-in_forwards]">
@@ -90,35 +120,47 @@ export default function GooseMessage({
         {textContent && (
           <div className="flex flex-col group">
             <div
-              className={`goose-message-content bg-bgSubtle rounded-2xl px-4 py-2 ${toolRequests.length > 0 ? 'rounded-b-none' : ''}`}
+              className={`goose-message-content bg-bgSubtle rounded-2xl px-4 py-2 ${toolRequests.length > 0 ? 'rounded-b-none' : 'rounded-bl-none'}`}
             >
               <div ref={contentRef}>{<MarkdownContent content={textContent} />}</div>
             </div>
             {/* Only show MessageCopyLink if there's text content and no tool requests/responses */}
-            {textContent && message.content.every((content) => content.type === 'text') && (
-              <div className="flex justify-end mr-2">
-                <MessageCopyLink text={textContent} contentRef={contentRef} />
-              </div>
-            )}
+            <div className="relative flex justify-end z-[-1]">
+              {toolRequests.length === 0 && (
+                <div className="absolute left-0 text-xs text-textSubtle pt-1 transition-all duration-200 group-hover:-translate-y-4 group-hover:opacity-0">
+                  {timestamp}
+                </div>
+              )}
+              {textContent && message.content.every((content) => content.type === 'text') && (
+                <div className="absolute left-0 pt-1">
+                  <MessageCopyLink text={textContent} contentRef={contentRef} />
+                </div>
+              )}
+            </div>
           </div>
         )}
 
         {toolRequests.length > 0 && (
-          <div
-            className={`goose-message-tool bg-bgApp border border-borderSubtle dark:border-gray-700 ${textContent ? '' : 'rounded-t-2xl'} rounded-b-2xl px-4 pt-4 pb-2`}
-          >
-            {toolRequests.map((toolRequest) => (
-              <ToolCallWithResponse
-                // If the message is resumed and not matched tool response, it means the tool is broken or cancelled.
-                isCancelledMessage={
-                  messageIndex < messageHistoryIndex &&
-                  toolResponsesMap.get(toolRequest.id) == undefined
-                }
-                key={toolRequest.id}
-                toolRequest={toolRequest}
-                toolResponse={toolResponsesMap.get(toolRequest.id)}
-              />
-            ))}
+          <div className="relative flex flex-col w-full">
+            <div
+              className={`goose-message-tool bg-bgApp border border-borderSubtle dark:border-gray-700 ${textContent ? '' : 'rounded-t-2xl'} rounded-b-2xl rounded-bl-none px-4 pt-4 pb-2`}
+            >
+              {toolRequests.map((toolRequest) => (
+                <ToolCallWithResponse
+                  // If the message is resumed and not matched tool response, it means the tool is broken or cancelled.
+                  isCancelledMessage={
+                    messageIndex < messageHistoryIndex &&
+                    toolResponsesMap.get(toolRequest.id) == undefined
+                  }
+                  key={toolRequest.id}
+                  toolRequest={toolRequest}
+                  toolResponse={toolResponsesMap.get(toolRequest.id)}
+                />
+              ))}
+            </div>
+            <div className="text-xs text-textSubtle pt-1 transition-all duration-200 group-hover:-translate-y-4 group-hover:opacity-0">
+              {timestamp}
+            </div>
           </div>
         )}
 
@@ -128,6 +170,16 @@ export default function GooseMessage({
             isClicked={messageIndex < messageHistoryIndex - 1}
             toolConfirmationId={toolConfirmationContent.id}
             toolName={toolConfirmationContent.toolName}
+          />
+        )}
+
+        {hasExtensionRequest && (
+          <ExtensionConfirmation
+            isCancelledMessage={messageIndex == messageHistoryIndex - 1}
+            isClicked={messageIndex < messageHistoryIndex - 1}
+            extensionConfirmationId={extensionContent.id}
+            extensionName={extensionContent.extensionName}
+            toolName={extensionContent.toolName}
           />
         )}
       </div>

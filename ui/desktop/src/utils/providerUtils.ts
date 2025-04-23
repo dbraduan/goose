@@ -16,7 +16,12 @@ import type { ExtensionConfig, FixedExtensionEntry } from '../components/ConfigC
 import { toastService } from '../toasts';
 import { ExtensionQuery, addExtension as apiAddExtension } from '../api';
 
-export function getStoredProvider(config: any): string | null {
+interface AppConfig {
+  GOOSE_PROVIDER?: string;
+  [key: string]: unknown;
+}
+
+export function getStoredProvider(config: AppConfig): string | null {
   return config.GOOSE_PROVIDER || localStorage.getItem(GOOSE_PROVIDER);
 }
 
@@ -89,8 +94,8 @@ There may be (but not always) some tools mentioned in the instructions which you
  *
  * @param addExtension Function to add extension to config.yaml
  */
-export const migrateExtensionsToSettingsV2 = async () => {
-  console.log('need to perform extension migration');
+export const migrateExtensionsToSettingsV3 = async () => {
+  console.log('need to perform extension migration v3');
 
   const userSettingsStr = localStorage.getItem('user_settings');
   let localStorageExtensions: FullExtensionConfig[] = [];
@@ -135,8 +140,8 @@ export const migrateExtensionsToSettingsV2 = async () => {
   }
 
   if (migrationErrors.length === 0) {
-    localStorage.setItem('configVersion', '2');
-    console.log('Extension migration complete. Config version set to 2.');
+    localStorage.setItem('configVersion', '3');
+    console.log('Extension migration complete. Config version set to 3.');
   } else {
     const errorSummaryStr = migrationErrors
       .map(({ name, error }) => `- ${name}: ${JSON.stringify(error)}`)
@@ -168,9 +173,9 @@ export const initializeSystem = async (
       console.log('Model synced with React state:', syncedModel);
     }
 
-    // Get botConfig directly here
-    const botConfig = window.appConfig?.get?.('botConfig');
-    const botPrompt = botConfig?.instructions;
+    // Get recipeConfig directly here
+    const recipeConfig = window.appConfig?.get?.('recipeConfig');
+    const botPrompt = recipeConfig?.instructions;
 
     // Extend the system prompt with desktop-specific information
     const response = await fetch(getApiUrl('/agent/prompt'), {
@@ -204,11 +209,11 @@ export const initializeSystem = async (
       // NOTE: remove when we want to stop migration logic
       // Check if we need to migrate extensions from localStorage to config.yaml
       const configVersion = localStorage.getItem('configVersion');
-      const shouldMigrateExtensions = !configVersion || parseInt(configVersion, 10) < 2;
+      const shouldMigrateExtensions = !configVersion || parseInt(configVersion, 10) < 3;
 
       console.log(`shouldMigrateExtensions is ${shouldMigrateExtensions}`);
       if (shouldMigrateExtensions) {
-        await migrateExtensionsToSettingsV2();
+        await migrateExtensionsToSettingsV3();
       }
 
       /* NOTE:
@@ -228,15 +233,13 @@ export const initializeSystem = async (
         await syncBundledExtensions(refreshedExtensions, options.addExtension);
       }
 
-      // enable all extensions in parallel
-      await Promise.all(
-        refreshedExtensions
-          .filter((e) => e.enabled)
-          .map((extensionEntry) => {
-            const extensionConfig = extractExtensionConfig(extensionEntry);
-            return addToAgentOnStartup({ addToConfig: options.addExtension, extensionConfig });
-          })
-      );
+      // Add enabled extensions to agent
+      for (const extensionEntry of refreshedExtensions) {
+        if (extensionEntry.enabled) {
+          const extensionConfig = extractExtensionConfig(extensionEntry);
+          await addToAgentOnStartup({ addToConfig: options.addExtension, extensionConfig });
+        }
+      }
     } else {
       loadAndAddStoredExtensions().catch((error) => {
         console.error('Failed to load and add stored extension configs:', error);

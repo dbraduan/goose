@@ -24,7 +24,12 @@ export type Envs = {
  * Represents the different types of MCP extensions that can be added to the manager
  */
 export type ExtensionConfig = {
+    /**
+     * Whether this extension is bundled with Goose
+     */
+    bundled?: boolean | null;
     description?: string | null;
+    env_keys?: Array<string>;
     envs?: Envs;
     /**
      * The name used to identify this extension
@@ -35,8 +40,13 @@ export type ExtensionConfig = {
     uri: string;
 } | {
     args: Array<string>;
+    /**
+     * Whether this extension is bundled with Goose
+     */
+    bundled?: boolean | null;
     cmd: string;
     description?: string | null;
+    env_keys?: Array<string>;
     envs?: Envs;
     /**
      * The name used to identify this extension
@@ -45,6 +55,10 @@ export type ExtensionConfig = {
     timeout?: number | null;
     type: 'stdio';
 } | {
+    /**
+     * Whether this extension is bundled with Goose
+     */
+    bundled?: boolean | null;
     display_name?: string | null;
     /**
      * The name used to identify this extension
@@ -53,6 +67,10 @@ export type ExtensionConfig = {
     timeout?: number | null;
     type: 'builtin';
 } | {
+    /**
+     * Whether this extension is bundled with Goose
+     */
+    bundled?: boolean | null;
     /**
      * Instructions for how to use these tools
      */
@@ -85,9 +103,31 @@ export type ExtensionResponse = {
 };
 
 /**
+ * Information about a model's capabilities
+ */
+export type ModelInfo = {
+    /**
+     * The maximum context length this model supports
+     */
+    context_limit: number;
+    /**
+     * The name of the model
+     */
+    name: string;
+};
+
+export type PermissionConfirmationRequest = {
+    action: string;
+    id: string;
+    principal_type?: PrincipalType;
+};
+
+/**
  * Enum representing the possible permission levels for a tool.
  */
 export type PermissionLevel = 'always_allow' | 'ask_before' | 'never_allow';
+
+export type PrincipalType = 'Extension' | 'Tool';
 
 export type ProviderDetails = {
     /**
@@ -122,10 +162,10 @@ export type ProviderMetadata = {
      */
     display_name: string;
     /**
-     * A list of currently known models
+     * A list of currently known models with their capabilities
      * TODO: eventually query the apis directly
      */
-    known_models: Array<string>;
+    known_models: Array<ModelInfo>;
     /**
      * Link to the docs where models can be found
      */
@@ -219,10 +259,22 @@ export type ToolInfo = {
     permission?: PermissionLevel | null;
 };
 
+export type ToolPermission = {
+    permission: PermissionLevel;
+    /**
+     * Unique identifier and name of the tool, format <extension_name>__<tool_name>
+     */
+    tool_name: string;
+};
+
 export type UpsertConfigQuery = {
     is_secret: boolean;
     key: string;
     value: unknown;
+};
+
+export type UpsertPermissionsQuery = {
+    tool_permissions: Array<ToolPermission>;
 };
 
 export type GetToolsData = {
@@ -256,7 +308,7 @@ export type GetToolsResponses = {
     /**
      * Tools retrieved successfully
      */
-    200: Array<Tool>;
+    200: Array<ToolInfo>;
 };
 
 export type GetToolsResponse = GetToolsResponses[keyof GetToolsResponses];
@@ -276,6 +328,29 @@ export type ReadAllConfigResponses = {
 };
 
 export type ReadAllConfigResponse = ReadAllConfigResponses[keyof ReadAllConfigResponses];
+
+export type BackupConfigData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/config/backup';
+};
+
+export type BackupConfigErrors = {
+    /**
+     * Internal server error
+     */
+    500: unknown;
+};
+
+export type BackupConfigResponses = {
+    /**
+     * Config file backed up
+     */
+    200: string;
+};
+
+export type BackupConfigResponse = BackupConfigResponses[keyof BackupConfigResponses];
 
 export type GetExtensionsData = {
     body?: never;
@@ -359,6 +434,52 @@ export type RemoveExtensionResponses = {
 };
 
 export type RemoveExtensionResponse = RemoveExtensionResponses[keyof RemoveExtensionResponses];
+
+export type InitConfigData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/config/init';
+};
+
+export type InitConfigErrors = {
+    /**
+     * Internal server error
+     */
+    500: unknown;
+};
+
+export type InitConfigResponses = {
+    /**
+     * Config initialization check completed
+     */
+    200: string;
+};
+
+export type InitConfigResponse = InitConfigResponses[keyof InitConfigResponses];
+
+export type UpsertPermissionsData = {
+    body: UpsertPermissionsQuery;
+    path?: never;
+    query?: never;
+    url: '/config/permissions';
+};
+
+export type UpsertPermissionsErrors = {
+    /**
+     * Invalid request
+     */
+    400: unknown;
+};
+
+export type UpsertPermissionsResponses = {
+    /**
+     * Permission update completed
+     */
+    200: string;
+};
+
+export type UpsertPermissionsResponse = UpsertPermissionsResponses[keyof UpsertPermissionsResponses];
 
 export type ProvidersData = {
     body?: never;
@@ -446,6 +567,31 @@ export type UpsertConfigResponses = {
 };
 
 export type UpsertConfigResponse = UpsertConfigResponses[keyof UpsertConfigResponses];
+
+export type ConfirmPermissionData = {
+    body: PermissionConfirmationRequest;
+    path?: never;
+    query?: never;
+    url: '/confirm';
+};
+
+export type ConfirmPermissionErrors = {
+    /**
+     * Unauthorized - invalid secret key
+     */
+    401: unknown;
+    /**
+     * Internal server error
+     */
+    500: unknown;
+};
+
+export type ConfirmPermissionResponses = {
+    /**
+     * Permission action is confirmed
+     */
+    200: unknown;
+};
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

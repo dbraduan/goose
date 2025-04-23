@@ -25,26 +25,43 @@ impl Theme {
             Theme::Ansi => "base16",
         }
     }
+
+    fn from_config_str(val: &str) -> Self {
+        if val.eq_ignore_ascii_case("light") {
+            Theme::Light
+        } else if val.eq_ignore_ascii_case("ansi") {
+            Theme::Ansi
+        } else {
+            Theme::Dark
+        }
+    }
+
+    fn as_config_string(&self) -> String {
+        match self {
+            Theme::Light => "light".to_string(),
+            Theme::Dark => "dark".to_string(),
+            Theme::Ansi => "ansi".to_string(),
+        }
+    }
 }
 
 thread_local! {
     static CURRENT_THEME: RefCell<Theme> = RefCell::new(
-        std::env::var("GOOSE_CLI_THEME")
-            .ok()
-            .map(|val| {
-                if val.eq_ignore_ascii_case("light") {
-                    Theme::Light
-                } else if val.eq_ignore_ascii_case("ansi") {
-                    Theme::Ansi
-                } else {
-                    Theme::Dark
-                }
-            })
-            .unwrap_or(Theme::Dark)
+        std::env::var("GOOSE_CLI_THEME").ok()
+            .map(|val| Theme::from_config_str(&val))
+            .unwrap_or_else(||
+                Config::global().get_param::<String>("GOOSE_CLI_THEME").ok()
+                    .map(|val| Theme::from_config_str(&val))
+                    .unwrap_or(Theme::Dark)
+            )
     );
 }
 
 pub fn set_theme(theme: Theme) {
+    let config = Config::global();
+    config
+        .set_param("GOOSE_CLI_THEME", Value::String(theme.as_config_string()))
+        .expect("Failed to set theme");
     CURRENT_THEME.with(|t| *t.borrow_mut() = theme);
 }
 
@@ -358,10 +375,17 @@ fn print_tool_header(call: &ToolCall) {
     println!("{}", tool_header);
 }
 
+// Respect NO_COLOR, as https://crates.io/crates/console already does
+pub fn env_no_color() -> bool {
+    // if NO_COLOR is defined at all disable colors
+    std::env::var_os("NO_COLOR").is_none()
+}
+
 fn print_markdown(content: &str, theme: Theme) {
     bat::PrettyPrinter::new()
         .input(bat::Input::from_bytes(content.as_bytes()))
         .theme(theme.as_str())
+        .colored_output(env_no_color())
         .language("Markdown")
         .wrapping_mode(WrappingMode::NoWrapping(true))
         .print()

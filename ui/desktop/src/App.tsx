@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { IpcRendererEvent } from 'electron';
 import { addExtensionFromDeepLink } from './extensions';
 import { openSharedSessionFromDeepLink } from './sessionLinks';
 import { getStoredModel } from './utils/providerUtils';
@@ -15,10 +16,10 @@ import { settingsV2Enabled } from './flags';
 import { extractExtensionName } from './components/settings/extensions/utils';
 import { GoosehintsModal } from './components/GoosehintsModal';
 import { SessionDetails } from './sessions';
-import { SharedSessionDetails } from './sharedSessions';
 
 import WelcomeView from './components/WelcomeView';
 import ChatView from './components/ChatView';
+import SuspenseLoader from './suspense-loader';
 import SettingsView, { type SettingsViewOptions } from './components/settings/SettingsView';
 import SettingsViewV2 from './components/settings_v2/SettingsView';
 import MoreModelsView from './components/settings/models/MoreModelsView';
@@ -26,11 +27,15 @@ import ConfigureProvidersView from './components/settings/providers/ConfigurePro
 import SessionsView from './components/sessions/SessionsView';
 import SharedSessionView from './components/sessions/SharedSessionView';
 import ProviderSettings from './components/settings_v2/providers/ProviderSettingsPage';
+import RecipeEditor from './components/RecipeEditor';
 import { useChat } from './hooks/useChat';
+import { addExtension as addExtensionDirect, FullExtensionConfig } from './extensions';
 
 import 'react-toastify/dist/ReactToastify.css';
 import { useConfig, MalformedConfigError } from './components/ConfigContext';
 import { addExtensionFromDeepLink as addExtensionFromDeepLinkV2 } from './components/settings_v2/extensions';
+import { backupConfig, initConfig, readAllConfig } from './api/sdk.gen';
+import PermissionSettingsView from './components/settings_v2/permission/PermissionSetting';
 
 // Views and their options
 export type View =
@@ -43,16 +48,49 @@ export type View =
   | 'ConfigureProviders'
   | 'settingsV2'
   | 'sessions'
-  | 'sharedSession';
+  | 'sharedSession'
+  | 'loading'
+  | 'recipeEditor'
+  | 'permission';
+
+export type ViewOptions =
+  | SettingsViewOptions
+  | { resumedSession?: SessionDetails }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | Record<string, any>;
 
 export type ViewConfig = {
   view: View;
-  viewOptions?:
-    | SettingsViewOptions
-    | {
-        resumedSession?: SessionDetails;
-      }
-    | Record<string, any>;
+  viewOptions?: ViewOptions;
+};
+
+const getInitialView = (): ViewConfig => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const viewFromUrl = urlParams.get('view');
+  const windowConfig = window.electron.getConfig();
+
+  if (viewFromUrl === 'recipeEditor' && windowConfig?.recipeConfig) {
+    return {
+      view: 'recipeEditor',
+      viewOptions: {
+        config: windowConfig.recipeConfig,
+      },
+    };
+  }
+
+  // Any other URL-specified view
+  if (viewFromUrl) {
+    return {
+      view: viewFromUrl as View,
+      viewOptions: {},
+    };
+  }
+
+  // Default case
+  return {
+    view: 'loading',
+    viewOptions: {},
+  };
 };
 
 export default function App() {
@@ -60,11 +98,10 @@ export default function App() {
   const [modalVisible, setModalVisible] = useState(false);
   const [pendingLink, setPendingLink] = useState<string | null>(null);
   const [modalMessage, setModalMessage] = useState<string>('');
-  const [{ view, viewOptions }, setInternalView] = useState<ViewConfig>({
-    view: 'welcome',
-    viewOptions: {},
-  });
-  const { getExtensions, addExtension, read } = useConfig();
+  const [extensionConfirmLabel, setExtensionConfirmLabel] = useState<string>('');
+  const [extensionConfirmTitle, setExtensionConfirmTitle] = useState<string>('');
+  const [{ view, viewOptions }, setInternalView] = useState<ViewConfig>(getInitialView());
+  const { getExtensions, addExtension, disableAllExtensions, read } = useConfig();
   const initAttemptedRef = useRef(false);
 
   // Utility function to extract the command from the link
@@ -75,6 +112,164 @@ export default function App() {
     return `${cmd} ${args.join(' ')}`.trim();
   }
 
+  // Utility function to extract the remote url from the link
+  function extractRemoteUrl(link: string): string {
+    const url = new URL(link);
+    return url.searchParams.get('url');
+  }
+
+  const setView = (view: View, viewOptions: ViewOptions = {}) => {
+    console.log(`Setting view to: ${view}`, viewOptions);
+    setInternalView({ view, viewOptions });
+  };
+
+  const disableAllStoredExtensions = () => {
+    const userSettingsStr = localStorage.getItem('user_settings');
+    if (!userSettingsStr) return;
+
+    try {
+      const userSettings = JSON.parse(userSettingsStr);
+      // Store original state before modifying
+      localStorage.setItem('user_settings_backup', userSettingsStr);
+      console.log('Backing up user_settings');
+
+      // Disable all extensions
+      userSettings.extensions = userSettings.extensions.map((ext) => ({
+        ...ext,
+        enabled: false,
+      }));
+
+      localStorage.setItem('user_settings', JSON.stringify(userSettings));
+      console.log('Disabled all stored extensions');
+      window.electron.emit('settings-updated');
+    } catch (error) {
+      console.error('Error disabling stored extensions:', error);
+    }
+  };
+
+  // Function to restore original extension states for new non-recipe windows
+  const restoreOriginalExtensionStates = () => {
+    const backupStr = localStorage.getItem('user_settings_backup');
+    if (backupStr) {
+      localStorage.setItem('user_settings', backupStr);
+      console.log('Restored original extension states');
+    }
+  };
+
+  const updateUserSettingsWithConfig = (extensions: FullExtensionConfig[]) => {
+    try {
+      const userSettingsStr = localStorage.getItem('user_settings');
+      const userSettings = userSettingsStr ? JSON.parse(userSettingsStr) : { extensions: [] };
+
+      // For each extension in the passed in config
+      extensions.forEach((newExtension) => {
+        // Find if this extension already exists
+        const existingIndex = userSettings.extensions.findIndex(
+          (ext) => ext.id === newExtension.id
+        );
+
+        if (existingIndex !== -1) {
+          // Extension exists - just set its enabled to true
+          userSettings.extensions[existingIndex].enabled = true;
+        } else {
+          // Extension is new - add it to the array
+          userSettings.extensions.push({
+            ...newExtension,
+            enabled: true,
+          });
+        }
+      });
+
+      localStorage.setItem('user_settings', JSON.stringify(userSettings));
+      console.log('Updated user settings with new/enabled extensions:', userSettings.extensions);
+
+      // Notify any listeners (like the settings page) that settings have changed
+      window.electron.emit('settings-updated');
+    } catch (error) {
+      console.error('Error updating user settings:', error);
+    }
+  };
+
+  const enableRecipeConfigExtensions = async (extensions: FullExtensionConfig[]) => {
+    if (!extensions?.length) {
+      console.log('No extensions to enable from bot config');
+      return;
+    }
+
+    console.log(`Enabling ${extensions.length} extensions from bot config:`, extensions);
+
+    disableAllStoredExtensions();
+
+    // Wait for initial server readiness
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    for (const extension of extensions) {
+      try {
+        console.log(`Enabling extension: ${extension.name}`);
+        const extensionConfig = {
+          ...extension,
+          enabled: true,
+        };
+
+        // Try to add the extension
+        const response = await addExtensionDirect(extensionConfig, false);
+
+        if (!response.ok) {
+          console.error(
+            `Failed to enable extension ${extension.name}: Server returned ${response.status}`
+          );
+          // If it's a 428, retry once
+          if (response.status === 428) {
+            console.log('Server not ready, waiting and will retry...');
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            try {
+              await addExtensionDirect(extensionConfig, true);
+              console.log(`Successfully enabled extension ${extension.name} on retry`);
+            } catch (retryError) {
+              console.error(`Failed to enable extension ${extension.name} on retry:`, retryError);
+            }
+          }
+          continue;
+        }
+        updateUserSettingsWithConfig(extensions);
+
+        console.log(`Successfully enabled extension: ${extension.name}`);
+      } catch (error) {
+        console.error(`Failed to enable extension ${extension.name}:`, error);
+      }
+    }
+
+    console.log('Finished enabling bot config extensions');
+  };
+
+  const _enableRecipeConfigExtensionsV2 = useCallback(
+    async (extensions: FullExtensionConfig[]) => {
+      if (!extensions?.length) {
+        console.log('No extensions to enable from bot config');
+        return;
+      }
+
+      try {
+        await disableAllExtensions();
+        console.log('Disabled all existing extensions');
+
+        for (const extension of extensions) {
+          try {
+            console.log(`Enabling extension: ${extension.name}`);
+            await addExtension(extension.name, extension, true);
+          } catch (error) {
+            console.error(`Failed to enable extension ${extension.name}:`, error);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to enable bot extensions');
+      }
+      console.log('Finished enabling bot config extensions');
+    },
+    [disableAllExtensions, addExtension]
+  );
+
+  // settings v2 initialization
   useEffect(() => {
     if (!settingsV2Enabled) {
       return;
@@ -89,8 +284,54 @@ export default function App() {
 
     console.log(`Initializing app with settings v2`);
 
+    const urlParams = new URLSearchParams(window.location.search);
+    const viewType = urlParams.get('view');
+    const recipeConfig = window.appConfig.get('recipeConfig');
+
+    // If we have a specific view type in the URL, use that and skip provider detection
+    if (viewType) {
+      if (viewType === 'recipeEditor' && recipeConfig) {
+        console.log('Setting view to recipeEditor with config:', recipeConfig);
+        setView('recipeEditor', { config: recipeConfig });
+      } else {
+        setView(viewType as View);
+      }
+      return;
+    }
+
     const initializeApp = async () => {
       try {
+        // checks if there is a config, and if not creates it
+        await initConfig();
+
+        // now try to read config, if we fail and are migrating backup, then re-init config
+        try {
+          await readAllConfig({ throwOnError: true });
+        } catch (error) {
+          // NOTE: we do this check here and in providerUtils.ts, be sure to clean up both in the future
+          const configVersion = localStorage.getItem('configVersion');
+          const shouldMigrateExtensions = !configVersion || parseInt(configVersion, 10) < 3;
+          if (shouldMigrateExtensions) {
+            await backupConfig({ throwOnError: true });
+            await initConfig();
+          } else {
+            // if we've migrated throw this back up
+            throw new Error('Unable to read config file, it may be malformed');
+          }
+        }
+
+        // note: if in a non recipe session, recipeConfig is undefined, otherwise null if error
+        if (recipeConfig === null) {
+          setFatalError('Cannot read recipe config. Please check the deeplink and try again.');
+          return;
+        }
+
+        // Handle bot config extensions first
+        // if (recipeConfig?.extensions?.length > 0 && viewType != 'recipeEditor') {
+        //   console.log('Found extensions in bot config:', recipeConfig.extensions);
+        //   await enableRecipeConfigExtensionsV2(recipeConfig.extensions);
+        // }
+
         const config = window.electron.getConfig();
 
         const provider = (await read('GOOSE_PROVIDER', false)) ?? config.GOOSE_DEFAULT_PROVIDER;
@@ -120,7 +361,9 @@ export default function App() {
           setView('welcome');
         }
       } catch (error) {
-        setFatalError(`${error.message || 'Unknown error'}`);
+        setFatalError(
+          `Initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        );
         setView('welcome');
       }
 
@@ -130,18 +373,13 @@ export default function App() {
 
     initializeApp().catch((error) => {
       console.error('Unhandled error in initialization:', error);
-      setFatalError(`${error.message || 'Unknown error'}`);
+      setFatalError(`${error instanceof Error ? error.message : 'Unknown error'}`);
     });
-  }, []);
-
-  const setView = (view: View, viewOptions: Record<any, any> = {}) => {
-    console.log(`Setting view to: ${view}`, viewOptions);
-    setInternalView({ view, viewOptions });
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty dependency array since we only want this to run once
 
   const [isGoosehintsModalOpen, setIsGoosehintsModalOpen] = useState(false);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
-  const [sharedSession, setSharedSession] = useState<SharedSessionDetails | null>(null);
   const [sharedSessionError, setSharedSessionError] = useState<string | null>(null);
   const [isLoadingSharedSession, setIsLoadingSharedSession] = useState(false);
   const { chat, setChat } = useChat({ setView, setIsLoadingSession });
@@ -152,13 +390,15 @@ export default function App() {
       window.electron.reactReady();
     } catch (error) {
       console.error('Error sending reactReady:', error);
-      setFatalError(`React ready notification failed: ${error.message}`);
+      setFatalError(
+        `React ready notification failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }, []);
 
   // Handle shared session deep links
   useEffect(() => {
-    const handleOpenSharedSession = async (_: any, link: string) => {
+    const handleOpenSharedSession = async (_event: IpcRendererEvent, link: string) => {
       window.electron.logInfo(`Opening shared session from deep link ${link}`);
       setIsLoadingSharedSession(true);
       setSharedSessionError(null);
@@ -190,7 +430,7 @@ export default function App() {
         try {
           const workingDir = window.appConfig.get('GOOSE_WORKING_DIR');
           console.log(`Creating new chat window with working dir: ${workingDir}`);
-          window.electron.createChatWindow(undefined, workingDir);
+          window.electron.createChatWindow(undefined, workingDir as string);
         } catch (error) {
           console.error('Error creating new window:', error);
         }
@@ -205,7 +445,7 @@ export default function App() {
 
   useEffect(() => {
     console.log('Setting up fatal error handler');
-    const handleFatalError = (_: any, errorMessage: string) => {
+    const handleFatalError = (_event: IpcRendererEvent, errorMessage: string) => {
       console.error('Encountered a fatal error: ', errorMessage);
       // Log additional context that might help diagnose the issue
       console.error('Current view:', view);
@@ -221,10 +461,28 @@ export default function App() {
 
   useEffect(() => {
     console.log('Setting up view change handler');
-    const handleSetView = (_, newView) => {
+    const handleSetView = (_event: IpcRendererEvent, newView: View) => {
       console.log(`Received view change request to: ${newView}`);
       setView(newView);
     };
+
+    // Get initial view and config
+    const urlParams = new URLSearchParams(window.location.search);
+    const viewFromUrl = urlParams.get('view');
+    if (viewFromUrl) {
+      // Get the config from the electron window config
+      const windowConfig = window.electron.getConfig();
+
+      if (viewFromUrl === 'recipeEditor') {
+        const initialViewOptions = {
+          recipeConfig: windowConfig?.recipeConfig,
+          view: viewFromUrl,
+        };
+        setView(viewFromUrl, initialViewOptions);
+      } else {
+        setView(viewFromUrl);
+      }
+    }
 
     window.electron.on('set-view', handleSetView);
     return () => window.electron.off('set-view', handleSetView);
@@ -233,7 +491,7 @@ export default function App() {
   // Add cleanup for session states when view changes
   useEffect(() => {
     console.log(`View changed to: ${view}`);
-    if (view !== 'chat') {
+    if (view !== 'chat' && view !== 'recipeEditor') {
       console.log('Not in chat view, clearing loading session state');
       setIsLoadingSession(false);
     }
@@ -242,16 +500,45 @@ export default function App() {
   // TODO: modify
   useEffect(() => {
     console.log('Setting up extension handler');
-    const handleAddExtension = (_: any, link: string) => {
+    const handleAddExtension = async (_event: IpcRendererEvent, link: string) => {
       try {
         console.log(`Received add-extension event with link: ${link}`);
         const command = extractCommand(link);
+        const remoteUrl = extractRemoteUrl(link);
         const extName = extractExtensionName(link);
         window.electron.logInfo(`Adding extension from deep link ${link}`);
         setPendingLink(link);
+
+        // Fetch the allowlist and check if the command is allowed
+        let warningMessage = '';
+        let label = 'OK';
+        let title = 'Confirm Extension Installation';
+        try {
+          const allowedCommands = await window.electron.getAllowedExtensions();
+
+          // Only check and show warning if we have a non-empty allowlist
+          if (allowedCommands && allowedCommands.length > 0) {
+            const isCommandAllowed = allowedCommands.some((allowedCmd) =>
+              command.startsWith(allowedCmd)
+            );
+
+            if (!isCommandAllowed) {
+              title = '⛔️ Untrusted Extension ⛔️';
+              label = 'Override and install';
+              warningMessage =
+                '\n\n⚠️ WARNING: This extension command is not in the allowed list. Installing extensions from untrusted sources may pose security risks. Please contact and admin if you are unsusure or want to allow this extension.';
+            }
+          }
+        } catch (error) {
+          console.error('Error checking allowlist:', error);
+        }
+
+        const messageDetails = remoteUrl ? `Remote URL: ${remoteUrl}` : `Command: ${command}`;
         setModalMessage(
-          `Are you sure you want to install the ${extName} extension?\n\nCommand: ${command}`
+          `Are you sure you want to install the ${extName} extension?\n\n${messageDetails}${warningMessage}`
         );
+        setExtensionConfirmLabel(label);
+        setExtensionConfirmTitle(title);
         setModalVisible(true);
       } catch (error) {
         console.error('Error handling add-extension event:', error);
@@ -292,13 +579,42 @@ export default function App() {
     setPendingLink(null);
   };
 
-  // TODO: remove
+  // TODO: remove -- careful removal of these and the useEffect below breaks
+  //  reloading to chat view using stored provider
   const { switchModel } = useModel(); // TODO: remove
   const { addRecentModel } = useRecentModels(); // TODO: remove
 
   useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const viewType = urlParams.get('view');
+    const recipeConfig = window.appConfig.get('recipeConfig');
+
     if (settingsV2Enabled) {
       return;
+    }
+
+    console.log(`Initializing app with settings v1`);
+
+    // Handle bot config extensions first
+    if (recipeConfig?.extensions?.length > 0 && viewType != 'recipeEditor') {
+      console.log('Found extensions in bot config:', recipeConfig.extensions);
+      enableRecipeConfigExtensions(recipeConfig.extensions);
+    }
+
+    // If we have a specific view type in the URL, use that and skip provider detection
+    if (viewType) {
+      if (viewType === 'recipeEditor' && recipeConfig) {
+        console.log('Setting view to recipeEditor with config:', recipeConfig);
+        setView('recipeEditor', { config: recipeConfig });
+      } else {
+        setView(viewType as View);
+      }
+      return;
+    }
+
+    // if not in any of the states above (in a regular chat)
+    if (!recipeConfig) {
+      restoreOriginalExtensionStates();
     }
 
     console.log(`Initializing app with settings v1`);
@@ -317,9 +633,9 @@ export default function App() {
         } else {
           setView('welcome');
         }
-      } catch (err) {
-        console.error('DETECTION ERROR:', err);
-        setFatalError(`Config detection error: ${err.message || 'Unknown error'}`);
+      } catch (error) {
+        console.error('DETECTION ERROR:', error);
+        setFatalError(`Config detection error: ${error.message || 'Unknown error'}`);
       }
     };
 
@@ -354,18 +670,19 @@ export default function App() {
             setFatalError(`Initialization failed: ${error.message || 'Unknown error'}`);
           }
         }
-      } catch (err) {
-        console.error('SETUP ERROR:', err);
-        setFatalError(`Setup error: ${err.message || 'Unknown error'}`);
+      } catch (error) {
+        console.error('SETUP ERROR:', error);
+        setFatalError(`Setup error: ${error.message || 'Unknown error'}`);
       }
     };
 
     // Execute the functions with better error handling
     detectStoredProvider();
-    setupStoredProvider().catch((err) => {
-      console.error('ASYNC SETUP ERROR:', err);
-      setFatalError(`Async setup error: ${err.message || 'Unknown error'}`);
+    setupStoredProvider().catch((error) => {
+      console.error('ASYNC SETUP ERROR:', error);
+      setFatalError(`Async setup error: ${error.message || 'Unknown error'}`);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (fatalError) {
@@ -399,8 +716,9 @@ export default function App() {
       {modalVisible && (
         <ConfirmationModal
           isOpen={modalVisible}
-          title="Confirm Extension Installation"
           message={modalMessage}
+          confirmLabel={extensionConfirmLabel}
+          title={extensionConfirmTitle}
           onConfirm={handleConfirm}
           onCancel={handleCancel}
         />
@@ -408,6 +726,7 @@ export default function App() {
       <div className="relative w-screen h-screen overflow-hidden bg-bgApp flex flex-col">
         <div className="titlebar-drag-region" />
         <div>
+          {view === 'loading' && <SuspenseLoader />}
           {view === 'welcome' &&
             (settingsV2Enabled ? (
               <ProviderSettings onClose={() => setView('chat')} isOnboarding={true} />
@@ -465,12 +784,12 @@ export default function App() {
           {view === 'sessions' && <SessionsView setView={setView} />}
           {view === 'sharedSession' && (
             <SharedSessionView
-              session={viewOptions.sessionDetails}
+              session={viewOptions?.sessionDetails}
               isLoading={isLoadingSharedSession}
-              error={viewOptions.error || sharedSessionError}
+              error={viewOptions?.error || sharedSessionError}
               onBack={() => setView('sessions')}
               onRetry={async () => {
-                if (viewOptions.shareToken && viewOptions.baseUrl) {
+                if (viewOptions?.shareToken && viewOptions?.baseUrl) {
                   setIsLoadingSharedSession(true);
                   try {
                     await openSharedSessionFromDeepLink(
@@ -487,11 +806,37 @@ export default function App() {
               }}
             />
           )}
+          {view === 'recipeEditor' && (
+            <RecipeEditor
+              key={viewOptions?.config ? 'with-config' : 'no-config'}
+              config={viewOptions?.config || window.electron.getConfig().recipeConfig}
+              onClose={() => setView('chat')}
+              setView={setView}
+              onSave={(config) => {
+                console.log('Saving recipe config:', config);
+                window.electron.createChatWindow(
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  config,
+                  'recipeEditor',
+                  { config }
+                );
+                setView('chat');
+              }}
+            />
+          )}
+          {view === 'permission' && (
+            <PermissionSettingsView
+              onClose={() => setView((viewOptions as { parentView: View }).parentView)}
+            />
+          )}
         </div>
       </div>
       {isGoosehintsModalOpen && (
         <GoosehintsModal
-          directory={window.appConfig.get('GOOSE_WORKING_DIR')}
+          directory={window.appConfig.get('GOOSE_WORKING_DIR') as string}
           setIsGoosehintsModalOpen={setIsGoosehintsModalOpen}
         />
       )}

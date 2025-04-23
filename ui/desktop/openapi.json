@@ -10,7 +10,7 @@
     "license": {
       "name": "Apache-2.0"
     },
-    "version": "1.0.17"
+    "version": "1.0.19"
   },
   "paths": {
     "/agent/tools": {
@@ -39,7 +39,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Tool"
+                    "$ref": "#/components/schemas/ToolInfo"
                   }
                 }
               }
@@ -73,6 +73,29 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/config/backup": {
+      "post": {
+        "tags": [
+          "super::routes::config_management"
+        ],
+        "operationId": "backup_config",
+        "responses": {
+          "200": {
+            "description": "Config file backed up",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
           }
         }
       }
@@ -169,6 +192,62 @@
           },
           "500": {
             "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/config/init": {
+      "post": {
+        "tags": [
+          "super::routes::config_management"
+        ],
+        "operationId": "init_config",
+        "responses": {
+          "200": {
+            "description": "Config initialization check completed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/config/permissions": {
+      "post": {
+        "tags": [
+          "super::routes::config_management"
+        ],
+        "operationId": "upsert_permissions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertPermissionsQuery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Permission update completed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
           }
         }
       }
@@ -295,6 +374,40 @@
           }
         }
       }
+    },
+    "/confirm": {
+      "post": {
+        "tags": [
+          "super::routes::reply"
+        ],
+        "operationId": "confirm_permission",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PermissionConfirmationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Permission action is confirmed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - invalid secret key"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -367,9 +480,20 @@
               "type"
             ],
             "properties": {
+              "bundled": {
+                "type": "boolean",
+                "description": "Whether this extension is bundled with Goose",
+                "nullable": true
+              },
               "description": {
                 "type": "string",
                 "nullable": true
+              },
+              "env_keys": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
               "envs": {
                 "$ref": "#/components/schemas/Envs"
@@ -411,12 +535,23 @@
                   "type": "string"
                 }
               },
+              "bundled": {
+                "type": "boolean",
+                "description": "Whether this extension is bundled with Goose",
+                "nullable": true
+              },
               "cmd": {
                 "type": "string"
               },
               "description": {
                 "type": "string",
                 "nullable": true
+              },
+              "env_keys": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
               "envs": {
                 "$ref": "#/components/schemas/Envs"
@@ -447,6 +582,11 @@
               "type"
             ],
             "properties": {
+              "bundled": {
+                "type": "boolean",
+                "description": "Whether this extension is bundled with Goose",
+                "nullable": true
+              },
               "display_name": {
                 "type": "string",
                 "nullable": true
@@ -478,6 +618,11 @@
               "type"
             ],
             "properties": {
+              "bundled": {
+                "type": "boolean",
+                "description": "Whether this extension is bundled with Goose",
+                "nullable": true
+              },
               "instructions": {
                 "type": "string",
                 "description": "Instructions for how to use these tools",
@@ -559,6 +704,43 @@
           }
         }
       },
+      "ModelInfo": {
+        "type": "object",
+        "description": "Information about a model's capabilities",
+        "required": [
+          "name",
+          "context_limit"
+        ],
+        "properties": {
+          "context_limit": {
+            "type": "integer",
+            "description": "The maximum context length this model supports",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the model"
+          }
+        }
+      },
+      "PermissionConfirmationRequest": {
+        "type": "object",
+        "required": [
+          "id",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "principal_type": {
+            "$ref": "#/components/schemas/PrincipalType"
+          }
+        }
+      },
       "PermissionLevel": {
         "type": "string",
         "description": "Enum representing the possible permission levels for a tool.",
@@ -566,6 +748,13 @@
           "always_allow",
           "ask_before",
           "never_allow"
+        ]
+      },
+      "PrincipalType": {
+        "type": "string",
+        "enum": [
+          "Extension",
+          "Tool"
         ]
       },
       "ProviderDetails": {
@@ -624,9 +813,9 @@
           "known_models": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/ModelInfo"
             },
-            "description": "A list of currently known models\nTODO: eventually query the apis directly"
+            "description": "A list of currently known models with their capabilities\nTODO: eventually query the apis directly"
           },
           "model_doc_link": {
             "type": "string",
@@ -740,6 +929,22 @@
           }
         }
       },
+      "ToolPermission": {
+        "type": "object",
+        "required": [
+          "tool_name",
+          "permission"
+        ],
+        "properties": {
+          "permission": {
+            "$ref": "#/components/schemas/PermissionLevel"
+          },
+          "tool_name": {
+            "type": "string",
+            "description": "Unique identifier and name of the tool, format <extension_name>__<tool_name>"
+          }
+        }
+      },
       "UpsertConfigQuery": {
         "type": "object",
         "required": [
@@ -755,6 +960,20 @@
             "type": "string"
           },
           "value": {}
+        }
+      },
+      "UpsertPermissionsQuery": {
+        "type": "object",
+        "required": [
+          "tool_permissions"
+        ],
+        "properties": {
+          "tool_permissions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolPermission"
+            }
+          }
         }
       }
     }
