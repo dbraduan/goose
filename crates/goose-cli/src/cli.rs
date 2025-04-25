@@ -8,7 +8,7 @@ use crate::commands::configure::handle_configure;
 use crate::commands::info::handle_info;
 use crate::commands::mcp::run_server;
 use crate::commands::recipe::{handle_deeplink, handle_validate};
-use crate::commands::session::{handle_session_list, handle_session_remove, handle_session_delete};
+use crate::commands::session::{handle_session_delete, handle_session_list, handle_session_remove};
 use crate::logging::setup_logging;
 use crate::recipe::load_recipe;
 use crate::session;
@@ -85,11 +85,7 @@ enum SessionCommand {
     Remove {
         #[arg(short, long, help = "Session ID to be removed (optional)")]
         id: Option<String>,
-        #[arg(
-            short,
-            long,
-            help = "Regex for removing matched sessions (optional)",
-        )]
+        #[arg(short, long, help = "Regex for removing matched sessions (optional)")]
         regex: Option<String>,
     },
 }

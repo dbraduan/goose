@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use goose::session::info::{get_session_info, SessionInfo, SortOrder};
 use cliclack::{confirm, multiselect};
+use goose::session::info::{get_session_info, SessionInfo, SortOrder};
 use regex::Regex;
 use std::fs;
 
@@ -33,7 +33,9 @@ fn prompt_interactive_session_selection(sessions: &[SessionInfo]) -> Result<Vec<
         return Ok(vec![]);
     }
 
-    let mut selector = multiselect("Select sessions to delete (use spacebar, Enter to confirm, Ctrl+C to cancel):");
+    let mut selector = multiselect(
+        "Select sessions to delete (use spacebar, Enter to confirm, Ctrl+C to cancel):",
+    );
 
     let display_map: std::collections::HashMap<String, SessionInfo> = sessions
         .iter()
@@ -88,23 +90,20 @@ pub fn handle_session_remove(id: Option<String>, regex_string: Option<String>) -
     } else if let Some(regex_val) = regex_string {
         let session_regex = Regex::new(&regex_val)
             .with_context(|| format!("Invalid regex pattern '{}'", regex_val))?;
-        
+
         matched_sessions = all_sessions
             .into_iter()
             .filter(|session| session_regex.is_match(&session.id))
             .collect();
 
         if matched_sessions.is_empty() {
-            println!(
-                "Regex string '{}' does not match any sessions",
-                regex_val
-            );
+            println!("Regex string '{}' does not match any sessions", regex_val);
             return Ok(());
         }
     } else {
         if all_sessions.is_empty() {
-             println!("No sessions found.");
-             return Ok(());
+            println!("No sessions found.");
+            return Ok(());
         }
         matched_sessions = prompt_interactive_session_selection(&all_sessions)?;
     }
