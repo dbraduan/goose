@@ -8,7 +8,7 @@ use crate::commands::configure::handle_configure;
 use crate::commands::info::handle_info;
 use crate::commands::mcp::run_server;
 use crate::commands::recipe::{handle_deeplink, handle_validate};
-use crate::commands::session::{handle_session_list, handle_session_remove};
+use crate::commands::session::{handle_session_list, handle_session_remove, handle_session_delete};
 use crate::logging::setup_logging;
 use crate::recipe::load_recipe;
 use crate::session;
@@ -93,6 +93,8 @@ enum SessionCommand {
         )]
         regex: String,
     },
+    #[command(about = "Interactively delete a session")]
+    Delete {},
 }
 
 #[derive(Subcommand)]
@@ -411,6 +413,10 @@ pub async fn cli() -> Result<()> {
                 Some(SessionCommand::Remove { id, regex }) => {
                     handle_session_remove(id, regex)?;
                     return Ok(());
+                }
+                Some(SessionCommand::Delete {}) => {
+                    handle_session_delete()?;
+                    Ok(())
                 }
                 None => {
                     // Run session command by default

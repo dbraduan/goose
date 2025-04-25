@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use goose::session::info::{get_session_info, SessionInfo, SortOrder};
+use cliclack::multiselect;
 use regex::Regex;
 use std::fs;
 
@@ -113,5 +114,83 @@ pub fn handle_session_list(verbose: bool, format: String, ascending: bool) -> Re
             }
         }
     }
+    Ok(())
+}
+
+pub fn handle_session_delete() -> Result<()> {
+    let sessions = match get_session_info(SortOrder::Descending) {
+        Ok(sessions) => sessions,
+        Err(e) => {
+            tracing::error!("Failed to retrieve sessions: {:?}", e);
+            return Err(anyhow::anyhow!("Failed to retrieve sessions"));
+        }
+    };
+
+    if sessions.is_empty() {
+        println!("No sessions found to delete.");
+        return Ok(());
+    }
+
+    let mut selector = multiselect("Select sessions to delete (use spacebar, Ctrl+C to cancel):");
+
+    for s in &sessions {
+        let desc = if s.metadata.description.is_empty() {
+            "(no description)"
+        } else {
+            &s.metadata.description
+        };
+        let truncated_desc = if desc.len() > 60 {
+            format!("{}...", &desc[..57])
+        } else {
+            desc.to_string()
+        };
+        let display_text = format!("{} - {} ({})", s.modified, truncated_desc, s.id);
+        selector = selector.item(display_text.clone(), display_text, "");
+    }
+
+    let selected_choices: Vec<String> = selector.interact()?;
+
+    if selected_choices.is_empty() {
+        println!("No sessions selected.");
+        return Ok(());
+    }
+
+    let sessions_to_delete: Vec<&SessionInfo> = sessions
+        .iter()
+        .filter(|s| {
+            let desc = if s.metadata.description.is_empty() {
+                "(no description)"
+            } else {
+                &s.metadata.description
+            };
+            let truncated_desc = if desc.len() > 60 {
+                format!("{}...", &desc[..57])
+            } else {
+                desc.to_string()
+            };
+            let formatted_choice = format!("{} - {} ({})", s.modified, truncated_desc, s.id);
+            selected_choices.contains(&formatted_choice)
+        })
+        .collect();
+
+    println!("The following sessions will be deleted:");
+    for session in &sessions_to_delete {
+        println!("- {}", session.id);
+    }
+
+    let should_delete = cliclack::confirm("Are you sure you want to delete these sessions?")
+        .initial_value(false)
+        .interact()?;
+
+    if should_delete {
+        for session in sessions_to_delete {
+            fs::remove_file(&session.path)
+                .with_context(|| format!("Failed to delete session file '{}'", session.path))?;
+            println!("Session '{}' deleted successfully.", session.id);
+        }
+    } else {
+        println!("Deletion cancelled.");
+    }
+
     Ok(())
 }
