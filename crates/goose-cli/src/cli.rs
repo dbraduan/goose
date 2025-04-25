@@ -81,20 +81,17 @@ enum SessionCommand {
         )]
         ascending: bool,
     },
-    #[command(about = "Remove sessions")]
+    #[command(about = "Remove sessions. Runs interactively if no ID or regex is provided.")]
     Remove {
-        #[arg(short, long, help = "session id to be removed", default_value = "")]
-        id: String,
+        #[arg(short, long, help = "Session ID to be removed (optional)")]
+        id: Option<String>,
         #[arg(
             short,
             long,
-            help = "regex for removing matched session",
-            default_value = ""
+            help = "Regex for removing matched sessions (optional)",
         )]
-        regex: String,
+        regex: Option<String>,
     },
-    #[command(about = "Interactively delete a session")]
-    Delete {},
 }
 
 #[derive(Subcommand)]
@@ -413,10 +410,6 @@ pub async fn cli() -> Result<()> {
                 Some(SessionCommand::Remove { id, regex }) => {
                     handle_session_remove(id, regex)?;
                     return Ok(());
-                }
-                Some(SessionCommand::Delete {}) => {
-                    handle_session_delete()?;
-                    Ok(())
                 }
                 None => {
                     // Run session command by default
