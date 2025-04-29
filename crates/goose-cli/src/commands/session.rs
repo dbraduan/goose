@@ -29,7 +29,7 @@ pub fn remove_sessions(sessions: Vec<SessionInfo>) -> Result<()> {
 
 fn prompt_interactive_session_selection(sessions: &[SessionInfo]) -> Result<Vec<SessionInfo>> {
     if sessions.is_empty() {
-        println!("No sessions available to select.");
+        println!("No sessions to delete.");
         return Ok(vec![]);
     }
 
@@ -84,8 +84,7 @@ pub fn handle_session_remove(id: Option<String>, regex_string: Option<String>) -
         if let Some(session) = all_sessions.iter().find(|s| s.id == id_val) {
             matched_sessions = vec![session.clone()];
         } else {
-            println!("Session '{}' not found.", id_val);
-            return Ok(());
+            return Err(anyhow::anyhow!("Session '{}' not found.", id_val));
         }
     } else if let Some(regex_val) = regex_string {
         let session_regex = Regex::new(&regex_val)
@@ -102,8 +101,7 @@ pub fn handle_session_remove(id: Option<String>, regex_string: Option<String>) -
         }
     } else {
         if all_sessions.is_empty() {
-            println!("No sessions found.");
-            return Ok(());
+            return Err(anyhow::anyhow!("No sessions found."));
         }
         matched_sessions = prompt_interactive_session_selection(&all_sessions)?;
     }
