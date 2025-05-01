@@ -4,6 +4,8 @@ use goose::session::info::{get_session_info, SessionInfo, SortOrder};
 use regex::Regex;
 use std::fs;
 
+const TRUNCATED_DESC_LENGTH: usize = 60;
+
 pub fn remove_sessions(sessions: Vec<SessionInfo>) -> Result<()> {
     println!("The following sessions will be removed:");
     for session in &sessions {
@@ -45,8 +47,8 @@ fn prompt_interactive_session_selection(sessions: &[SessionInfo]) -> Result<Vec<
             } else {
                 &s.metadata.description
             };
-            let truncated_desc = if desc.len() > 60 {
-                format!("{}...", &desc[..57])
+            let truncated_desc = if desc.len() > TRUNCATED_DESC_LENGTH {
+                format!("{}...", &desc[..TRUNCATED_DESC_LENGTH - 3])
             } else {
                 desc.to_string()
             };
