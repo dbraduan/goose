@@ -446,6 +446,12 @@ pub async fn cli() -> Result<()> {
                         session.session_file().file_stem().and_then(|s| s.to_str()),
                         None,
                     )?;
+
+                    // Render previous messages if resuming a session
+                    if resume {
+                        session.render_message_history();
+                    }
+
                     let _ = session.interactive(None).await;
                     Ok(())
                 }
