@@ -409,7 +409,7 @@ const INDENT: &str = "    ";
 
 fn get_tool_params_max_length() -> usize {
     Config::global()
-        .get_param::<usize>("GOOSE_CLI_TOOL_PARAMS_MAX_LENGTH")
+        .get_param::<usize>("GOOSE_CLI_TOOL_PARAMS_TRUNCATION_MAX_LENGTH")
         .ok()
         .unwrap_or(40)
 }
