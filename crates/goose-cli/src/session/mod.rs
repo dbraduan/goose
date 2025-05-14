@@ -3,6 +3,7 @@ mod completion;
 mod input;
 mod output;
 mod prompt;
+mod export;
 mod thinking;
 
 pub use builder::{build_session, SessionBuilderConfig};
@@ -12,6 +13,7 @@ use goose::permission::Permission;
 use goose::permission::PermissionConfirmation;
 use goose::providers::base::Provider;
 pub use goose::session::Identifier;
+pub use self::export::message_to_markdown;
 
 use anyhow::{Context, Result};
 use completion::GooseCompleter;
