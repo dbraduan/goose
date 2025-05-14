@@ -1,7 +1,7 @@
+use crate::session::message_to_markdown;
 use anyhow::{Context, Result};
 use goose::session::info::{get_session_info, SessionInfo, SortOrder};
 use goose::session::{self, Identifier};
-use crate::session::message_to_markdown;
 use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
