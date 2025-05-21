@@ -272,6 +272,8 @@ let appConfig = {
   GOOSE_API_HOST: 'http://127.0.0.1',
   GOOSE_PORT: 0,
   GOOSE_WORKING_DIR: '',
+  // If GOOSE_ALLOWLIST_WARNING env var is not set, defaults to false (strict blocking mode)
+  GOOSE_ALLOWLIST_WARNING: process.env.GOOSE_ALLOWLIST_WARNING === 'true',
   secretKey: generateSecretKey(),
 };
 
@@ -283,10 +285,11 @@ const windowMap = new Map<number, BrowserWindow>();
 
 interface RecipeConfig {
   id: string;
-  name: string;
+  title: string;
   description: string;
   instructions: string;
   activities: string[];
+  prompt: string;
 }
 
 const createChat = async (
@@ -309,11 +312,10 @@ const createChat = async (
     if (existingWindows.length > 0) {
       // Get the config from localStorage through an existing window
       try {
-        const result = await existingWindows[0].webContents.executeJavaScript(
-          `localStorage.getItem('gooseConfig')`
+        const config = await existingWindows[0].webContents.executeJavaScript(
+          `window.electron.getConfig()`
         );
-        if (result) {
-          const config = JSON.parse(result);
+        if (config) {
           port = config.GOOSE_PORT;
           working_dir = config.GOOSE_WORKING_DIR;
         }
@@ -760,6 +762,44 @@ const registerGlobalHotkey = (accelerator: string) => {
 };
 
 app.whenReady().then(async () => {
+  // Add CSP headers to all sessions
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self';" +
+            // Allow inline styles since we use them in our React components
+            "style-src 'self' 'unsafe-inline';" +
+            // Scripts only from our app
+            "script-src 'self';" +
+            // Images from our app and data: URLs (for base64 images)
+            "img-src 'self' data: https:;" +
+            // Connect to our local API and specific external services
+            "connect-src 'self' http://127.0.0.1:*" +
+            // Don't allow any plugins
+            "object-src 'none';" +
+            // Don't allow any frames
+            "frame-src 'none';" +
+            // Font sources
+            "font-src 'self';" +
+            // Media sources
+            "media-src 'none';" +
+            // Form actions
+            "form-action 'none';" +
+            // Base URI restriction
+            "base-uri 'self';" +
+            // Manifest files
+            "manifest-src 'self';" +
+            // Worker sources
+            "worker-src 'self';" +
+            // Upgrade insecure requests
+            'upgrade-insecure-requests;',
+        ],
+      },
+    });
+  });
+
   // Register the default global hotkey
   registerGlobalHotkey('CommandOrControl+Alt+Shift+G');
 
@@ -926,6 +966,48 @@ app.whenReady().then(async () => {
         },
       })
     );
+  }
+
+  // on macOS, the topbar is hidden
+  if (menu && process.platform !== 'darwin') {
+    let helpMenu = menu.items.find((item) => item.label === 'Help');
+
+    // If Help menu doesn't exist, create it and add it to the menu
+    if (!helpMenu) {
+      helpMenu = new MenuItem({
+        label: 'Help',
+        submenu: Menu.buildFromTemplate([]), // Start with an empty submenu
+      });
+      // Find a reasonable place to insert the Help menu, usually near the end
+      const insertIndex = menu.items.length > 0 ? menu.items.length - 1 : 0;
+      menu.items.splice(insertIndex, 0, helpMenu);
+    }
+
+    // Ensure the Help menu has a submenu before appending
+    if (helpMenu.submenu) {
+      // Add a separator before the About item if the submenu is not empty
+      if (helpMenu.submenu.items.length > 0) {
+        helpMenu.submenu.append(new MenuItem({ type: 'separator' }));
+      }
+
+      // Create the About Goose menu item with a submenu
+      const aboutGooseMenuItem = new MenuItem({
+        label: 'About Goose',
+        submenu: Menu.buildFromTemplate([]), // Start with an empty submenu for About
+      });
+
+      // Add the Version menu item (display only) to the About Goose submenu
+      if (aboutGooseMenuItem.submenu) {
+        aboutGooseMenuItem.submenu.append(
+          new MenuItem({
+            label: `Version ${gooseVersion || app.getVersion()}`,
+            enabled: false,
+          })
+        );
+      }
+
+      helpMenu.submenu.append(aboutGooseMenuItem);
+    }
   }
 
   if (menu) {
