@@ -11,12 +11,13 @@ use crate::commands::project::{handle_project_default, handle_projects_interacti
 use crate::commands::recipe::{handle_deeplink, handle_validate};
 use crate::commands::session::{handle_session_list, handle_session_remove};
 use crate::logging::setup_logging;
-use crate::recipes::recipe::load_recipe;
+use crate::recipes::recipe::{explain_recipe_with_parameters, load_recipe_as_template};
 use crate::session;
 use crate::session::{build_session, SessionBuilderConfig};
 use goose_bench::bench_config::BenchRunConfig;
 use goose_bench::runners::bench_runner::BenchRunner;
 use goose_bench::runners::eval_runner::EvalRunner;
+use goose_bench::runners::metric_aggregator::MetricAggregator;
 use goose_bench::runners::model_runner::ModelRunner;
 use std::io::Read;
 use std::path::PathBuf;
@@ -155,6 +156,19 @@ pub enum BenchCommand {
         #[arg(short, long, help = "A serialized config file for the eval only.")]
         config: String,
     },
+
+    #[command(
+        name = "generate-leaderboard",
+        about = "Generate a leaderboard CSV from benchmark results"
+    )]
+    GenerateLeaderboard {
+        #[arg(
+            short,
+            long,
+            help = "Path to the benchmark directory containing model evaluation results"
+        )]
+        benchmark_dir: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -232,6 +246,15 @@ enum Command {
             long_help = "When enabled, shows complete tool responses without truncation and full paths."
         )]
         debug: bool,
+
+        /// Maximum number of consecutive identical tool calls allowed
+        #[arg(
+            long = "max-tool-repetitions",
+            value_name = "NUMBER",
+            help = "Maximum number of consecutive identical tool calls allowed",
+            long_help = "Set a limit on how many times the same tool can be called consecutively with identical parameters. Helps prevent infinite loops."
+        )]
+        max_tool_repetitions: Option<u32>,
 
         /// Add stdio extensions with environment variables and commands
         #[arg(
@@ -336,6 +359,22 @@ enum Command {
             conflicts_with_all = ["resume", "name", "path"] 
         )]
         no_session: bool,
+
+        /// Show the recipe title, description, and parameters
+        #[arg(
+            long = "explain",
+            help = "Show the recipe title, description, and parameters"
+        )]
+        explain: bool,
+
+        /// Maximum number of consecutive identical tool calls allowed
+        #[arg(
+            long = "max-tool-repetitions",
+            value_name = "NUMBER",
+            help = "Maximum number of consecutive identical tool calls allowed",
+            long_help = "Set a limit on how many times the same tool can be called consecutively with identical parameters. Helps prevent infinite loops."
+        )]
+        max_tool_repetitions: Option<u32>,
 
         /// Identifier for this run session
         #[command(flatten)]
@@ -459,6 +498,7 @@ pub async fn cli() -> Result<()> {
             resume,
             history,
             debug,
+            max_tool_repetitions,
             extensions,
             remote_extensions,
             builtins,
@@ -505,6 +545,7 @@ pub async fn cli() -> Result<()> {
                         extensions_override: None,
                         additional_system_prompt: None,
                         debug,
+                        max_tool_repetitions,
                     })
                     .await;
                     setup_logging(
@@ -541,13 +582,15 @@ pub async fn cli() -> Result<()> {
             resume,
             no_session,
             debug,
+            max_tool_repetitions,
             extensions,
             remote_extensions,
             builtins,
             params,
+            explain,
         }) => {
-            let input_config = match (instructions, input_text, recipe) {
-                (Some(file), _, _) if file == "-" => {
+            let input_config = match (instructions, input_text, recipe, explain) {
+                (Some(file), _, _, _) if file == "-" => {
                     let mut input = String::new();
                     std::io::stdin()
                         .read_to_string(&mut input)
@@ -559,7 +602,7 @@ pub async fn cli() -> Result<()> {
                         additional_system_prompt: None,
                     }
                 }
-                (Some(file), _, _) => {
+                (Some(file), _, _, _) => {
                     let contents = std::fs::read_to_string(&file).unwrap_or_else(|err| {
                         eprintln!(
                             "Instruction file not found — did you mean to use goose run --text?\n{}",
@@ -573,14 +616,18 @@ pub async fn cli() -> Result<()> {
                         additional_system_prompt: None,
                     }
                 }
-                (_, Some(text), _) => InputConfig {
+                (_, Some(text), _, _) => InputConfig {
                     contents: Some(text),
                     extensions_override: None,
                     additional_system_prompt: None,
                 },
-                (_, _, Some(recipe_name)) => {
+                (_, _, Some(recipe_name), explain) => {
+                    if explain {
+                        explain_recipe_with_parameters(&recipe_name, params)?;
+                        return Ok(());
+                    }
                     let recipe =
-                        load_recipe(&recipe_name, true, Some(params)).unwrap_or_else(|err| {
+                        load_recipe_as_template(&recipe_name, params).unwrap_or_else(|err| {
                             eprintln!("{}: {}", console::style("Error").red().bold(), err);
                             std::process::exit(1);
                         });
@@ -590,7 +637,7 @@ pub async fn cli() -> Result<()> {
                         additional_system_prompt: recipe.instructions,
                     }
                 }
-                (None, None, None) => {
+                (None, None, None, _) => {
                     eprintln!("Error: Must provide either --instructions (-i), --text (-t), or --recipe. Use -i - for stdin.");
                     std::process::exit(1);
                 }
@@ -606,6 +653,7 @@ pub async fn cli() -> Result<()> {
                 extensions_override: input_config.extensions_override,
                 additional_system_prompt: input_config.additional_system_prompt,
                 debug,
+                max_tool_repetitions,
             })
             .await;
 
@@ -647,6 +695,9 @@ pub async fn cli() -> Result<()> {
                 BenchCommand::ExecEval { config } => {
                     EvalRunner::from(config)?.run(agent_generator).await?
                 }
+                BenchCommand::GenerateLeaderboard { benchmark_dir } => {
+                    MetricAggregator::generate_csv_from_benchmark_dir(&benchmark_dir)?
+                }
             }
             return Ok(());
         }
@@ -677,6 +728,7 @@ pub async fn cli() -> Result<()> {
                     extensions_override: None,
                     additional_system_prompt: None,
                     debug: false,
+                    max_tool_repetitions: None,
                 })
                 .await;
                 setup_logging(

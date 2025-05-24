@@ -55,11 +55,13 @@ const isUserMessage = (message: Message): boolean => {
 };
 
 export default function ChatView({
+  readyForAutoUserPrompt,
   chat,
   setChat,
   setView,
   setIsGoosehintsModalOpen,
 }: {
+  readyForAutoUserPrompt: boolean;
   chat: ChatType;
   setChat: (chat: ChatType) => void;
   setView: (view: View, viewOptions?: ViewOptions) => void;
@@ -68,6 +70,7 @@ export default function ChatView({
   return (
     <ChatContextManagerProvider>
       <ChatContent
+        readyForAutoUserPrompt={readyForAutoUserPrompt}
         chat={chat}
         setChat={setChat}
         setView={setView}
@@ -78,11 +81,13 @@ export default function ChatView({
 }
 
 function ChatContent({
+  readyForAutoUserPrompt,
   chat,
   setChat,
   setView,
   setIsGoosehintsModalOpen,
 }: {
+  readyForAutoUserPrompt: boolean;
   chat: ChatType;
   setChat: (chat: ChatType) => void;
   setView: (view: View, viewOptions?: ViewOptions) => void;
@@ -97,6 +102,7 @@ function ChatContent({
   const [droppedFiles, setDroppedFiles] = useState<string[]>([]);
 
   const scrollRef = useRef<ScrollAreaHandle>(null);
+  const hasSentPromptRef = useRef(false);
 
   const {
     summaryContent,
@@ -277,6 +283,14 @@ function ChatContent({
       setHasMessages(true);
     }
   }, [messages]);
+
+  useEffect(() => {
+    const prompt = recipeConfig?.prompt;
+    if (prompt && !hasSentPromptRef.current && readyForAutoUserPrompt) {
+      append(prompt);
+      hasSentPromptRef.current = true;
+    }
+  }, [recipeConfig?.prompt, append, readyForAutoUserPrompt]);
 
   // Handle submit
   const handleSubmit = (e: React.FormEvent) => {
@@ -476,7 +490,6 @@ function ChatContent({
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
   };
-
   return (
     <div className="flex flex-col w-full h-screen items-center justify-center">
       {/* Loader when generating recipe */}
