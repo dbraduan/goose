@@ -142,98 +142,8 @@ pub fn handle_session_export(identifier: Identifier, output_path: Option<PathBuf
         }
     };
 
-    // Create an internal struct mimicking the Session's export function
-    // This allows us to reuse the exact same export logic
-    struct ExportSession {
-        messages: Vec<goose::message::Message>,
-        session_file: PathBuf,
-    }
-
-    impl ExportSession {
-        // Copy of the export_message_history_to_markdown logic from Session
-        fn export_message_history_to_markdown(
-            &self,
-            session_name_override: Option<&str>,
-        ) -> String {
-            let mut markdown_output = String::new();
-
-            let session_name = session_name_override.unwrap_or_else(|| {
-                self.session_file
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("Unnamed Session")
-            });
-
-            markdown_output.push_str(&format!("# Session Export: {}\n\n", session_name));
-
-            if self.messages.is_empty() {
-                markdown_output.push_str("*(This session has no messages)*\n");
-                return markdown_output;
-            }
-
-            markdown_output.push_str(&format!(
-                "*Total messages: {}*\n\n---\n\n",
-                self.messages.len()
-            ));
-
-            // We need to track if the last message had tool requests to properly handle tool responses
-            let mut skip_next_if_tool_response = false;
-
-            for (_, message) in self.messages.iter().enumerate() {
-                // Check if this is a User message containing only ToolResponses
-                let is_only_tool_response = message.role == mcp_core::role::Role::User
-                    && message.content.iter().all(|content| {
-                        matches!(content, goose::message::MessageContent::ToolResponse(_))
-                    });
-
-                // If the previous message had tool requests and this one is just tool responses,
-                // don't create a new User section - we'll attach the responses to the tool calls
-                if skip_next_if_tool_response && is_only_tool_response {
-                    // Import the function directly to fix visibility issues
-                    // Export the tool responses without a User heading
-                    markdown_output.push_str(&message_to_markdown(message, false));
-                    markdown_output.push_str("\n\n---\n\n");
-                    skip_next_if_tool_response = false;
-                    continue;
-                }
-
-                // Reset the skip flag - we'll update it below if needed
-                skip_next_if_tool_response = false;
-
-                // Output the role prefix except for tool response-only messages
-                if !is_only_tool_response {
-                    let role_prefix = match message.role {
-                        mcp_core::role::Role::User => "### User:\n",
-                        mcp_core::role::Role::Assistant => "### Assistant:\n",
-                        _ => "### Unknown Role Message:\n",
-                    };
-                    markdown_output.push_str(role_prefix);
-                }
-
-                // Add the message content
-                markdown_output.push_str(&message_to_markdown(message, false));
-                markdown_output.push_str("\n\n---\n\n");
-
-                // Check if this message has any tool requests, to handle the next message differently
-                if message.content.iter().any(|content| {
-                    matches!(content, goose::message::MessageContent::ToolRequest(_))
-                }) {
-                    skip_next_if_tool_response = true;
-                }
-            }
-
-            markdown_output
-        }
-    }
-
-    // Create our lightweight session (no Agent)
-    let export_session = ExportSession {
-        messages,
-        session_file: session_file_path.clone(),
-    };
-
-    // Generate the markdown content
-    let markdown = export_session.export_message_history_to_markdown(None);
+    // Generate the markdown content using the export functionality
+    let markdown = export_session_to_markdown(messages, &session_file_path, None);
 
     // Output the markdown
     if let Some(output) = output_path {
@@ -245,6 +155,83 @@ pub fn handle_session_export(identifier: Identifier, output_path: Option<PathBuf
     }
 
     Ok(())
+}
+
+/// Convert a list of messages to markdown format for session export
+///
+/// This function handles the formatting of a complete session including headers,
+/// message organization, and proper tool request/response pairing.
+fn export_session_to_markdown(
+    messages: Vec<goose::message::Message>,
+    session_file: &Path,
+    session_name_override: Option<&str>,
+) -> String {
+    let mut markdown_output = String::new();
+
+    let session_name = session_name_override.unwrap_or_else(|| {
+        session_file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unnamed Session")
+    });
+
+    markdown_output.push_str(&format!("# Session Export: {}\n\n", session_name));
+
+    if messages.is_empty() {
+        markdown_output.push_str("*(This session has no messages)*\n");
+        return markdown_output;
+    }
+
+    markdown_output.push_str(&format!("*Total messages: {}*\n\n---\n\n", messages.len()));
+
+    // Track if the last message had tool requests to properly handle tool responses
+    let mut skip_next_if_tool_response = false;
+
+    for message in &messages {
+        // Check if this is a User message containing only ToolResponses
+        let is_only_tool_response = message.role == mcp_core::role::Role::User
+            && message
+                .content
+                .iter()
+                .all(|content| matches!(content, goose::message::MessageContent::ToolResponse(_)));
+
+        // If the previous message had tool requests and this one is just tool responses,
+        // don't create a new User section - we'll attach the responses to the tool calls
+        if skip_next_if_tool_response && is_only_tool_response {
+            // Export the tool responses without a User heading
+            markdown_output.push_str(&message_to_markdown(message, false));
+            markdown_output.push_str("\n\n---\n\n");
+            skip_next_if_tool_response = false;
+            continue;
+        }
+
+        // Reset the skip flag - we'll update it below if needed
+        skip_next_if_tool_response = false;
+
+        // Output the role prefix except for tool response-only messages
+        if !is_only_tool_response {
+            let role_prefix = match message.role {
+                mcp_core::role::Role::User => "### User:\n",
+                mcp_core::role::Role::Assistant => "### Assistant:\n",
+            };
+            markdown_output.push_str(role_prefix);
+        }
+
+        // Add the message content
+        markdown_output.push_str(&message_to_markdown(message, false));
+        markdown_output.push_str("\n\n---\n\n");
+
+        // Check if this message has any tool requests, to handle the next message differently
+        if message
+            .content
+            .iter()
+            .any(|content| matches!(content, goose::message::MessageContent::ToolRequest(_)))
+        {
+            skip_next_if_tool_response = true;
+        }
+    }
+
+    markdown_output
 }
 
 /// Prompt the user to interactively select a session
