@@ -19,6 +19,7 @@ pub enum InputResult {
     EndPlan,
     Recipe(Option<String>),
     Summarize,
+    FilePicker,
 }
 
 #[derive(Debug)]
@@ -69,6 +70,12 @@ pub fn get_input(
                 InputResult::Exit
             });
         }
+        
+        // Check for @ command to trigger file picker
+        if trimmed == "@" {
+            return Ok(InputResult::FilePicker);
+        }
+        
         return Ok(InputResult::Message(trimmed.to_string()));
     }
 
@@ -229,6 +236,7 @@ fn parse_plan_command(input: String) -> Option<InputResult> {
 fn print_help() {
     println!(
         "Available commands:
+@ - Open file picker to browse and select files
 /exit or /quit - Exit the session
 /t - Toggle Light/Dark/Ansi theme
 /extension <command> - Add a stdio extension (format: ENV1=val1 command args...)
@@ -246,6 +254,13 @@ fn print_help() {
                        If no filepath is provided, it will be saved to ./recipe.yaml.
 /summarize - Summarize the current conversation to reduce context length while preserving key information.
 /? or /help - Display this help message
+
+File Picker:
+@ - Opens file picker immediately
+@ + Tab - Opens file picker with tab completion (replaces @ with selected file)
+Esc - Cancel file picker
+Enter - Select highlighted file
+Type to search/filter files
 
 Navigation:
 Ctrl+C - Interrupt goose (resets the interaction to before the interrupted user request)

@@ -355,7 +355,7 @@ impl Hinter for GooseCompleter {
     fn hint(&self, line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<Self::Hint> {
         // Only show hint when line is empty
         if line.is_empty() {
-            Some("Press Enter to send, Ctrl-J for new line".to_string())
+            Some("Press Enter to send, Ctrl-J for new line, @ + Tab for file picker".to_string())
         } else {
             None
         }
@@ -378,7 +378,49 @@ impl Highlighter for GooseCompleter {
     }
 
     fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
-        Cow::Borrowed(line)
+        // Look for @filename patterns and highlight them
+        if line.contains('@') {
+            let mut result = String::new();
+            let mut chars = line.char_indices().peekable();
+            
+            while let Some((i, ch)) = chars.next() {
+                if ch == '@' {
+                    // Found an @ symbol, look for the filename that follows
+                    let start = i;
+                    let mut end = i + 1;
+                    
+                    // Find the end of the filename (until whitespace or end of line)
+                    while let Some((j, next_ch)) = chars.peek() {
+                        if next_ch.is_whitespace() {
+                            break;
+                        }
+                        end = *j + next_ch.len_utf8();
+                        chars.next();
+                    }
+                    
+                    if end > start + 1 {
+                        // We have a filename after @, style it with clean, subtle highlighting
+                        let filename_part = &line[start..end];
+                        
+                        let styled = console::Style::new()
+                            .on_color256(236)  // Very subtle dark gray background
+                            .color256(215)     // Soft peach/orange text
+                            .apply_to(filename_part)
+                            .to_string();
+                        result.push_str(&styled);
+                    } else {
+                        // Just @ with nothing after, add it normally
+                        result.push(ch);
+                    }
+                } else {
+                    result.push(ch);
+                }
+            }
+            
+            Cow::Owned(result)
+        } else {
+            Cow::Borrowed(line)
+        }
     }
 
     fn highlight_char(&self, _line: &str, _pos: usize, _cmd_kind: CmdKind) -> bool {

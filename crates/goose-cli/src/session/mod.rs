@@ -1,5 +1,7 @@
 mod builder;
 mod completion;
+mod file_picker;
+mod file_picker_handler;
 mod input;
 mod output;
 mod prompt;
@@ -348,6 +350,13 @@ impl Session {
         let completer = GooseCompleter::new(self.completion_cache.clone());
         editor.set_helper(Some(completer));
 
+        // Set up file picker handler for @ + Tab
+        let file_picker_handler = file_picker_handler::FilePickerHandler::new();
+        editor.bind_sequence(
+            rustyline::KeyEvent(rustyline::KeyCode::Tab, rustyline::Modifiers::empty()),
+            rustyline::EventHandler::Conditional(Box::new(file_picker_handler)),
+        );
+
         // Create and use a global history file in ~/.config/goose directory
         // This allows command history to persist across different chat sessions
         // instead of being tied to each individual session's messages
@@ -596,6 +605,29 @@ impl Session {
                     }
 
                     continue;
+                }
+                input::InputResult::FilePicker => {
+                    save_history(&mut editor);
+                    
+                    // Get current working directory
+                    let current_dir = std::env::current_dir()
+                        .unwrap_or_else(|_| PathBuf::from("."));
+                    
+                    match file_picker::show_file_picker(&current_dir) {
+                        Ok(Some(_selected_file)) => {
+                            // For now, just show the selected file
+                            // TODO: In future iterations, add to context or do something with it
+                            continue;
+                        }
+                        Ok(None) => {
+                            // User cancelled the picker
+                            continue;
+                        }
+                        Err(e) => {
+                            output::render_error(&format!("File picker error: {}", e));
+                            continue;
+                        }
+                    }
                 }
             }
         }
