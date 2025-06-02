@@ -16,14 +16,12 @@ pre-build = [
 [target.x86_64-unknown-linux-gnu]
 xargo = false
 pre-build = [
-    # Install necessary dependencies for x86_64
-    # We don't need architecture-specific flags because x86_64 dependencies are installable on Ubuntu system
     """\
     apt-get update && apt-get install -y \
      pkg-config \
      libssl-dev \
      libdbus-1-dev \
-     libxcb1-dev \
+     libxcb1-dev
     """
 ]
 
