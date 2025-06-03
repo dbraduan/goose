@@ -155,7 +155,6 @@ enum SchedulerCommand {
         #[arg(long, help = "ID of the schedule to run")] // Explicitly make it --id
         id: String,
     },
-
 }
 
 #[derive(Subcommand)]
