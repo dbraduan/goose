@@ -1,6 +1,6 @@
 use crate::session::message_to_markdown;
 use anyhow::{Context, Result};
-use cliclack::{confirm, multiselect};
+use cliclack::{confirm, multiselect, select};
 use goose::session::info::{get_session_info, SessionInfo, SortOrder};
 use goose::session::{self, Identifier};
 use regex::Regex;
@@ -32,7 +32,7 @@ pub fn remove_sessions(sessions: Vec<SessionInfo>) -> Result<()> {
     Ok(())
 }
 
-fn prompt_interactive_session_selection(sessions: &[SessionInfo]) -> Result<Vec<SessionInfo>> {
+fn prompt_interactive_session_removal(sessions: &[SessionInfo]) -> Result<Vec<SessionInfo>> {
     if sessions.is_empty() {
         println!("No sessions to delete.");
         return Ok(vec![]);
@@ -108,7 +108,7 @@ pub fn handle_session_remove(id: Option<String>, regex_string: Option<String>) -
         if all_sessions.is_empty() {
             return Err(anyhow::anyhow!("No sessions found."));
         }
-        matched_sessions = prompt_interactive_session_selection(&all_sessions)?;
+        matched_sessions = prompt_interactive_session_removal(&all_sessions)?;
     }
 
     if matched_sessions.is_empty() {
@@ -302,7 +302,7 @@ pub fn prompt_interactive_session_selection() -> Result<session::Identifier> {
     }
 
     // Build the selection prompt
-    let mut selector = cliclack::select("Select a session to export:");
+    let mut selector = select("Select a session to export:");
 
     // Map to display text
     let display_map: std::collections::HashMap<String, SessionInfo> = sessions

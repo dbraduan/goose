@@ -34,7 +34,7 @@ struct Cli {
     command: Option<Command>,
 }
 
-#[derive(Args)]
+#[derive(Args, Debug)]
 #[group(required = false, multiple = false)]
 struct Identifier {
     #[arg(
@@ -102,6 +102,19 @@ enum SessionCommand {
         #[arg(short, long, help = "Regex for removing matched sessions (optional)")]
         regex: Option<String>,
     },
+    #[command(about = "Export a session to Markdown format")]
+    Export {
+        #[command(flatten)]
+        identifier: Option<Identifier>,
+
+        #[arg(
+            short,
+            long,
+            help = "Output file path (default: stdout)",
+            long_help = "Path to save the exported Markdown. If not provided, output will be sent to stdout"
+        )]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -142,19 +155,7 @@ enum SchedulerCommand {
         #[arg(long, help = "ID of the schedule to run")] // Explicitly make it --id
         id: String,
     },
-    #[command(about = "Export a session to Markdown format")]
-    Export {
-        #[command(flatten)]
-        identifier: Option<Identifier>,
 
-        #[arg(
-            short,
-            long,
-            help = "Output file path (default: stdout)",
-            long_help = "Path to save the exported Markdown. If not provided, output will be sent to stdout"
-        )]
-        output: Option<PathBuf>,
-    },
 }
 
 #[derive(Subcommand)]
