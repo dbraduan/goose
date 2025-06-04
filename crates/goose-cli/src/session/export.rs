@@ -259,7 +259,7 @@ pub fn tool_response_to_markdown(resp: &ToolResponse, export_all_content: bool) 
                                 text,
                             } => {
                                 // Extract file extension from the URI for syntax highlighting
-                                let file_extension = uri.split('.').last().unwrap_or("");
+                                let file_extension = uri.split('.').next_back().unwrap_or("");
                                 let syntax_type = match file_extension {
                                     "rs" => "rust",
                                     "js" => "javascript",
